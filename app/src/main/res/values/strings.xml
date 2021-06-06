@@ -1,4 +1,24 @@
 <resources>
     <string name="app_name">ColorGuide</string>
     <string name="color">Color:</string>
+    <string name="colorNameRed">Red</string>
+    <string name="colorNameOrange">Orange</string>
+    <string name="colorNameYellow">Yellow</string>
+    <string name="colorNameYellowGreen">Yellow Green</string>
+    <string name="colorNameGreen">Green</string>
+    <string name="colorNameGreenCyan">Green Cyan</string>
+    <string name="colorNameCyan">Cyan</string>
+    <string name="colorNameBlueCyan">Blue Cyan</string>
+    <string name="colorNameBlue">Blue</string>
+    <string name="colorNameViolet">Violet</string>
+    <string name="colorNameMagenta">Magenta</string>
+    <string name="colorNameRose">Rose</string>
+    <string name="colorPrefixNameGreyish">greyish</string>
+    <string name="colorNameGrey">Grey</string>
+    <string name="colorPrefixNameDark">dark</string>
+    <string name="colorNameWhite">White</string>
+    <string name="colorPrefixNameLight">light</string>
+    <string name="colorNameBlack">Black</string>
+    <string name="colorPrefixNameVeryLight">very light</string>
+    <string name="colorNameBrown">Brown</string>
 </resources>

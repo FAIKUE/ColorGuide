@@ -1,18 +1,22 @@
 package me.fabiankuenzle.colorguide
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
+import android.util.Size
+import android.widget.ImageView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.core.*
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import kotlinx.android.synthetic.main.activity_main.*
-import java.io.File
 import java.nio.ByteBuffer
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -21,10 +25,9 @@ import kotlin.math.roundToInt
 
 typealias ColorListener = (color: String) -> Unit
 
-class MainActivity : AppCompatActivity() {
-    private var imageCapture: ImageCapture? = null
+private const val ANALYZER_FPS: Double = 1.0
 
-    private lateinit var outputDirectory: File
+class MainActivity : AppCompatActivity() {
     private lateinit var cameraExecutor: ExecutorService
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,13 +36,18 @@ class MainActivity : AppCompatActivity() {
 
         // Request camera permissions
         if (allPermissionsGranted()) {
+            cameraExecutor = Executors.newCachedThreadPool()
             startCamera()
+            showCrosshair()
         } else {
             ActivityCompat.requestPermissions(
                     this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS)
         }
+    }
 
-        cameraExecutor = Executors.newSingleThreadExecutor()
+    private fun showCrosshair() {
+        val crosshairImageView = findViewById<ImageView>(R.id.crosshair)
+        crosshairImageView.setImageResource(R.drawable.ic_outline_crop_din_24)
     }
 
     private fun startCamera() {
@@ -59,11 +67,14 @@ class MainActivity : AppCompatActivity() {
             // Select back camera as a default
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
+            val size = Size(viewFinder.width/10, viewFinder.height/10)
+
             val imageAnalyzer = ImageAnalysis.Builder()
+                .setTargetResolution(size)
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
                     .also {
-                        it.setAnalyzer(cameraExecutor, ColorAnalyzer { color ->
+                        it.setAnalyzer(cameraExecutor, ColorAnalyzer (this.applicationContext) { color ->
                             colorTextView.text = color
                         })
                     }
@@ -109,12 +120,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        private const val TAG = "CameraXBasic"
+        private const val TAG = "MainActiviy"
         private const val REQUEST_CODE_PERMISSIONS = 10
         private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
     }
 
-    private class ColorAnalyzer(private val listener: ColorListener) : ImageAnalysis.Analyzer {
+    private class ColorAnalyzer(private val context: Context, private val listener: ColorListener) : ImageAnalysis.Analyzer {
         private var lastAnalyzedTimestamp: Long = 0
 
         private fun ByteBuffer.toByteArray(): ByteArray {
@@ -124,7 +135,7 @@ class MainActivity : AppCompatActivity() {
             return data // Return the byte array
         }
 
-        private fun getHSVfromYUV(image: ImageProxy): FloatArray {
+        private fun getCenterHSVFromImage(image: ImageProxy): FloatArray {
             val planes = image.planes
 
             val height = image.height
@@ -138,7 +149,7 @@ class MainActivity : AppCompatActivity() {
 
             // U
             val uArr = planes[1].buffer
-            val uArrByteArray =uArr.toByteArray()
+            val uArrByteArray = uArr.toByteArray()
             val uPixelStride = planes[1].pixelStride
             val uRowStride = planes[1].rowStride
 
@@ -148,6 +159,29 @@ class MainActivity : AppCompatActivity() {
             val vPixelStride = planes[2].pixelStride
             val vRowStride = planes[2].rowStride
 
+//            var ySum = 0
+//            var uSum = 0
+//            var vSum = 0
+//            var valueCount = 0
+//
+//            for (y in height - height/10..height + height/10)
+//            {
+//                for (x in width - width/10..width + width/10) {
+//                    val yValue = yArrByteArray[(y*yRowStride + x * yPixelStride)/2].toInt() and 255
+//                    val uValue = (uArrByteArray[(y*uRowStride + x * uPixelStride)/4].toInt() and 255) - 128
+//                    val vValue = (vArrByteArray[(y*vRowStride + x * vPixelStride)/4].toInt() and 255) - 128
+//
+//                    ySum += yValue
+//                    uSum += uValue
+//                    vSum += vValue
+//                    valueCount++
+//                }
+//            }
+//
+//            val y = ySum / valueCount.toFloat()
+//            val u = uSum / valueCount.toFloat()
+//            val v = vSum / valueCount.toFloat()
+
             val y = yArrByteArray[(height * yRowStride + width * yPixelStride) / 2].toInt() and 255
             val u = (uArrByteArray[(height * uRowStride + width * uPixelStride) / 4].toInt() and 255) - 128
             val v = (vArrByteArray[(height * vRowStride + width * vPixelStride) / 4].toInt() and 255) - 128
@@ -156,52 +190,88 @@ class MainActivity : AppCompatActivity() {
             val g:Int = (y - (0.698001 * v) - (0.337633 * u)).roundToInt()
             val b:Int = (y + (1.732446 * u)).roundToInt()
 
-            val hsv: FloatArray = FloatArray(3)
+            val hsv = FloatArray(3)
             android.graphics.Color.RGBToHSV(r, g, b, hsv)
 
             return hsv
         }
 
-        fun HSVtoColorName(hsv: FloatArray): String {
-            val colors: MutableMap<String, Int> = HashMap()
-            colors["Red"] = 0
-            colors["Orange"] = 30
-            colors["Yellow"] = 60
-            colors["Green"] = 120
-            colors["Spring"] = 150
-            colors["Cyan"] = 180
-            colors["Azure"] = 210
-            colors["Blue"] = 240
-            colors["Violet"] = 270
-            colors["Magenta"] = 300
-            colors["Rose"] = 330
+        fun getColorNameFromHsv(hsv: FloatArray): String {
+            val colors: MutableMap<String, Int> = Helpers.getColorNamesMap(context)
+            val hsl = Helpers.convertHSVToHSL(hsv)
+            val hue = hsl[0]
+            val saturation = hsl[1]
+            val lightness = hsl[2]
+            var colorPrefix = ""
+            var colorName = ""
 
-            val hue = hsv[0]
-            var nearestColorName = ""
-            var nearestColorDistance = 360
-
-            for (color in colors)
-            {
-                val colorDistance = (color.value - hue).absoluteValue.roundToInt()
-                if (colorDistance < nearestColorDistance) {
-                    nearestColorDistance = colorDistance
-                    nearestColorName = color.key
+            if (lightness > 0.95) {
+                colorName = context.getString(R.string.colorNameWhite)
+            } else if (lightness < 0.1) {
+                colorName = context.getString(R.string.colorNameBlack)
+            } else {
+                if (saturation < 0.15) {
+                    colorName = context.getString(R.string.colorNameGrey)
                 }
             }
 
-            Log.d(TAG, "Nearest Color: $nearestColorName with distance: $nearestColorDistance, hue: $hue")
-            return nearestColorName
+            if (colorName == "") {
+                // colours
+                var nearestColorName = ""
+                var nearestColorDistance = 360.0F
+
+                for (color in colors)
+                {
+                    val colorDistance = (color.value - hue).absoluteValue
+                    if (colorDistance < nearestColorDistance) {
+                        nearestColorDistance = colorDistance
+                        nearestColorName = color.key
+                    }
+                }
+
+                when {
+                    colorName == context.getString(R.string.colorNameOrange) &&
+                        lightness < 0.25 && lightness > 0.1 -> {
+                        // brown
+                        nearestColorName = context.getString(R.string.colorNameBrown)
+                    } lightness < 0.2 -> {
+                        // dark
+                        colorPrefix += context.getString(R.string.colorPrefixNameDark) + " "
+                    } lightness > 0.7 -> {
+                        // light
+                        colorPrefix += context.getString(R.string.colorPrefixNameLight) + " "
+                    } lightness > 0.8 -> {
+                        // very light
+                        colorPrefix += context.getString(R.string.colorPrefixNameVeryLight) + " "
+                    }
+                }
+
+                if (saturation < 0.3) {
+                    // greyish colour
+                    colorPrefix += context.getString(R.string.colorPrefixNameGreyish) + " "
+                }
+
+                Log.d(TAG, "Nearest Color: $nearestColorName with distance: $nearestColorDistance, hue: $hue")
+                colorName = nearestColorName
+            }
+
+            val fullColorName = "$colorPrefix$colorName"
+
+            Log.d(TAG, "Color: $fullColorName, hsv: ${hsv[0]} ${hsv[1]} ${hsv[2]}")
+            return  fullColorName
         }
 
         // analyze the color
         override fun analyze(image: ImageProxy) {
             val currentTimestamp = System.currentTimeMillis()
-            val hsv = getHSVfromYUV(image)
-            image.close()
-            val colorString = HSVtoColorName(hsv)
-            lastAnalyzedTimestamp = currentTimestamp
+            if (currentTimestamp - lastAnalyzedTimestamp >= 1000 / ANALYZER_FPS) {
+                val hsv = getCenterHSVFromImage(image)
+                val colorString = getColorNameFromHsv(hsv)
+                lastAnalyzedTimestamp = currentTimestamp
+                listener(colorString)
+            }
 
-            listener(colorString)
+            image.close()
         }
     }
 }
