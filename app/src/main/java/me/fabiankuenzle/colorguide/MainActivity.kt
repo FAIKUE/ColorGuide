@@ -3,16 +3,17 @@ package me.fabiankuenzle.colorguide
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.res.Resources
+import android.os.Build
 import android.os.Bundle
+import android.util.DisplayMetrics
 import android.util.Log
 import android.util.Size
+import android.view.View
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
-import androidx.camera.core.Preview
+import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -28,6 +29,8 @@ typealias ColorListener = (color: String) -> Unit
 private const val ANALYZER_FPS: Double = 1.0
 
 class MainActivity : AppCompatActivity() {
+    private var torchEnabled: Boolean = false
+    private lateinit var camera: Camera
     private lateinit var cameraExecutor: ExecutorService
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,28 +67,27 @@ class MainActivity : AppCompatActivity() {
                         it.setSurfaceProvider(viewFinder.createSurfaceProvider())
                     }
 
-            // Select back camera as a default
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-            val size = Size(viewFinder.width/10, viewFinder.height/10)
+            val width = Resources.getSystem().displayMetrics.widthPixels
+            // Use a 10th of display with for image analyzer width and height, so 1 pixel are 100 in the real image.
+            val size = Size(width/10, width/10)
 
             val imageAnalyzer = ImageAnalysis.Builder()
                 .setTargetResolution(size)
-                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .build()
-                    .also {
-                        it.setAnalyzer(cameraExecutor, ColorAnalyzer (this.applicationContext) { color ->
-                            colorTextView.text = color
-                        })
-                    }
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build()
+                .also {
+                    it.setAnalyzer(cameraExecutor, ColorAnalyzer (this.applicationContext) { color ->
+                        colorTextView.text = color
+                    })
+                }
 
             try {
                 // Unbind use cases before rebinding
                 cameraProvider.unbindAll()
 
                 // Bind use cases to camera
-                cameraProvider.bindToLifecycle(
-                        this, cameraSelector, preview, imageAnalyzer)
+                camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalyzer)
 
             } catch(exc: Exception) {
                 Log.e(TAG, "Use case binding failed", exc)
@@ -196,21 +198,20 @@ class MainActivity : AppCompatActivity() {
             return hsv
         }
 
-        fun getColorNameFromHsv(hsv: FloatArray): String {
+        fun getColorNameFromHsv(hsl: FloatArray): String {
             val colors: MutableMap<String, Int> = Helpers.getColorNamesMap(context)
-            val hsl = Helpers.convertHSVToHSL(hsv)
             val hue = hsl[0]
             val saturation = hsl[1]
             val lightness = hsl[2]
             var colorPrefix = ""
             var colorName = ""
 
-            if (lightness > 0.95) {
+            if (lightness > 0.7) {
                 colorName = context.getString(R.string.colorNameWhite)
             } else if (lightness < 0.1) {
                 colorName = context.getString(R.string.colorNameBlack)
             } else {
-                if (saturation < 0.15) {
+                if (saturation < 0.1) {
                     colorName = context.getString(R.string.colorNameGrey)
                 }
             }
@@ -230,8 +231,8 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 when {
-                    colorName == context.getString(R.string.colorNameOrange) &&
-                        lightness < 0.25 && lightness > 0.1 -> {
+                    nearestColorName == context.getString(R.string.colorNameOrange) &&
+                        lightness < 0.6 && lightness > 0.1 -> {
                         // brown
                         nearestColorName = context.getString(R.string.colorNameBrown)
                     } lightness < 0.2 -> {
@@ -246,7 +247,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                if (saturation < 0.3) {
+                if (saturation < 0.2) {
                     // greyish colour
                     colorPrefix += context.getString(R.string.colorPrefixNameGreyish) + " "
                 }
@@ -257,7 +258,7 @@ class MainActivity : AppCompatActivity() {
 
             val fullColorName = "$colorPrefix$colorName"
 
-            Log.d(TAG, "Color: $fullColorName, hsv: ${hsv[0]} ${hsv[1]} ${hsv[2]}")
+            Log.d(TAG, "Color: $fullColorName, hsl: ${hsl[0]} ${hsl[1]} ${hsl[2]}")
             return  fullColorName
         }
 
@@ -266,12 +267,25 @@ class MainActivity : AppCompatActivity() {
             val currentTimestamp = System.currentTimeMillis()
             if (currentTimestamp - lastAnalyzedTimestamp >= 1000 / ANALYZER_FPS) {
                 val hsv = getCenterHSVFromImage(image)
-                val colorString = getColorNameFromHsv(hsv)
+                val hsl = Helpers.convertHSVToHSL(hsv)
+                val colorString = getColorNameFromHsv(hsl)
                 lastAnalyzedTimestamp = currentTimestamp
                 listener(colorString)
             }
 
             image.close()
+        }
+    }
+
+    fun toggleFlash(view: View) {
+        if (camera.cameraInfo.hasFlashUnit()) {
+            torchEnabled = if (torchEnabled) {
+                camera.cameraControl.enableTorch(false)
+                false
+            } else {
+                camera.cameraControl.enableTorch(true)
+                true
+            }
         }
     }
 }
